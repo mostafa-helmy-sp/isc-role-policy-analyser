@@ -1,0 +1,157 @@
+{
+	"name": "Role Policy Analyser",
+	"commands": [
+		"std:account:list",
+		"std:test-connection"
+	],
+	"sourceConfig": [
+		{
+			"type": "menu",
+			"label": "Connection Configuration",
+			"items": [
+				{
+					"type": "section",
+					"sectionTitle": "Authentication",
+					"sectionHelpMessage": "Provide API URL and OAuth2.0 ClientID and ClientSecret to connect to your tenant.",
+					"items": [
+						{
+							"key": "apiUrl",
+							"label": "API URL",
+							"helpText": "https://tenant.api.identitynow.com",
+							"type": "text",
+							"required": true
+						},
+						{
+							"key": "clientId",
+							"label": "OAuth2.0 Client ID",
+							"type": "text",
+							"required": true
+						},
+						{
+							"key": "clientSecret",
+							"label": "OAuth2.0 Client Secret",
+							"type": "secret",
+							"required": true
+						}
+					]
+				}
+			]
+		},
+		{
+			"type": "menu",
+			"label": "Additional Settings",
+			"items": [
+				{
+					"type": "section",
+					"sectionTitle": "Policy Simulation",
+					"sectionHelpMessage": "Provide the required parameters to process and read your Policies.",
+					"items": [
+						{
+							"key": "simulationIdentityName",
+							"label": "Name of the Zero Entitlement Simulation Identity",
+							"helpText": "This simulation identity should have NO existing access (Roles, Access Profiles, or Entitlements) and is used to simulate policy violations against all the access of Roles / Access Profiles.",
+							"type": "text",
+							"required": true
+						},
+						{
+							"key": "policies",
+							"label": "Policies to check against",
+							"type": "list",
+							"helpKey": "Add the names of SOD Policies you would like to analyse Roles and Access Profiles against. An empty list will analyse all policies."
+						}
+					]
+				},
+				{
+					"type": "section",
+					"sectionTitle": "Task Processing",
+					"sectionHelpMessage": "Provide the task processing .",
+					"items": [
+						{
+							"key": "deltaProcessing",
+							"type": "radio",
+							"label": "Enable Delta Processing?",
+							"required": true,
+							"options": [
+								{
+									"label": "Yes",
+									"value": "yes"
+								},
+								{
+									"label": "No",
+									"value": "no"
+								}
+							]
+						},
+						{
+							"key": "rolePolicyAnalyserSourceName",
+							"label": "Role Policy Analyser Source Name",
+							"helpText": "Re-enter the name of this source you are currently configuring. Only required when Delta Processing is set to Yes.",
+							"type": "text",
+							"required": false
+						}
+					]
+				}
+			]
+		}
+	],
+	"accountSchema": {
+		"displayAttribute": "displayName",
+		"identityAttribute": "id",
+		"attributes": [
+			{
+				"name": "id",
+				"type": "string",
+				"description": "Id of the Role / Access Profile"
+			},
+			{
+				"name": "name",
+				"type": "string",
+				"description": "Name of the Role / Access Profile"
+			},
+			{
+				"name": "type",
+				"type": "string",
+				"description": "Role or Access Profile"
+			},
+			{
+				"name": "displayName",
+				"type": "string",
+				"description": "Display Name of the Role / Access Profile"
+			},
+			{
+				"name": "description",
+				"type": "string",
+				"description": "Description of the Role / Access Profile"
+			},
+			{
+				"name": "ownerId",
+				"type": "string",
+				"description": "ID of the Role / Access Profile owner"
+			},
+			{
+				"name": "ownerName",
+				"type": "string",
+				"description": "Name of the Role / Access Profile owner"
+			},
+			{
+				"name": "effectiveEntitlements",
+				"type": "string",
+				"multi": "true",
+				"description": "List of effective entitlements part of the Role / Access Profile"
+			},
+			{
+				"name": "violatedPolicies",
+				"type": "string",
+				"multi": "true",
+				"description": "List of violated policies"
+			},
+			{
+				"name": "violatingEntitlements",
+				"type": "string",
+				"multi": "true",
+				"description": "List of violating entitlements part of the Role / Access Profile"
+			}
+		]
+	},
+	"entitlementSchemas": []
+}
