@@ -1,17 +1,13 @@
 import {
-    ConnectorError,
+    CommandState,
     logger
 } from "@sailpoint/connector-sdk"
 import {
     Configuration,
     ConfigurationParameters,
-    SourcesApi,
-    SourcesApiListSourcesRequest,
     SearchApi,
     Search,
     Paginator,
-    AccountsApi,
-    AccountsApiListAccountsRequest,
     RolesApi,
     AccessProfilesApi,
     RolesApiListRolesRequest,
@@ -25,7 +21,12 @@ import {
     ViolationContext,
     EntitlementsBetaApi,
     EntitlementsBetaApiGetEntitlementRequest,
-    EntitlementBeta
+    EntitlementBeta,
+    SODPolicyApi,
+    SODPolicyApiListSodPoliciesRequest,
+    SodPolicy,
+    SodPolicyTypeEnum,
+    RoleDocument
 } from "sailpoint-api-client"
 import { InherentViolation } from "./model/inherent-violations"
 
@@ -34,13 +35,15 @@ var tokenUrlPath = "/oauth/token"
 
 // Set Source Config Global Defaults
 var defaultIdentityResolutionAttribute = "name"
+var defaultTypeRole = "ROLE"
+var defaultTypeAccessProfile = "ACCESS_PROFILE"
 
 export class IdnClient {
 
     private readonly apiConfig: Configuration
-    private readonly rolePolicyAnalyserSourceName: string
     private readonly simulationIdentityName: string
-    private rolePolicyAnalyserSourceId?: string
+    private readonly includedPolicies?: string[]
+    private readonly excludedPolicies?: string[]
     private simulationIdentityId?: string
 
     constructor(config: any) {
@@ -53,79 +56,15 @@ export class IdnClient {
         }
         this.apiConfig = new Configuration(ConfigurationParameters)
         this.apiConfig.retriesConfig = {
-            retries: 2
+            retries: 3
         }
         // configure the rest of the source parameters
         this.simulationIdentityName = config.simulationIdentityName
-        this.rolePolicyAnalyserSourceName = config.rolePolicyAnalyserSourceName
-    }
-
-    // To be used for Delta Aggregation
-    async getRolePolicyAnalyserSourceId(): Promise<any> {
-        // Check if Source ID is null
-        if (!this.rolePolicyAnalyserSourceId) {
-            let filter = `name eq "${this.rolePolicyAnalyserSourceName}"`
-            // Get and set Source ID if not already set
-            logger.debug("Role Policy Analyser Source ID not set, getting the ID using the Sources API")
-            const sourceApi = new SourcesApi(this.apiConfig)
-            const sourcesRequest: SourcesApiListSourcesRequest = {
-                filters: filter
-            }
-            try {
-                const sources = await sourceApi.listSources(sourcesRequest)
-                if (sources.data.length > 0) {
-                    this.rolePolicyAnalyserSourceId = sources.data[0].id
-                }
-            } catch (err) {
-                let errorMessage = `Error retrieving Role Policy Analyser Source ID using Sources API ${JSON.stringify(err)} with request: ${JSON.stringify(sourcesRequest)}`
-                logger.error(errorMessage, err)
-                throw new ConnectorError(errorMessage)
-            }
+        if (config.includedPolicies) {
+            this.includedPolicies = config.includedPolicies
         }
-        // Return set Source ID
-        logger.debug(`Role Policy Source Id: [${this.rolePolicyAnalyserSourceId}]`)
-        return this.rolePolicyAnalyserSourceId
-    }
-
-    // To be used for Delta Aggregation
-    async getAllRolePolicyViolations(): Promise<any[]> {
-        // Get Role Policy Analyser Source ID
-        await this.getRolePolicyAnalyserSourceId()
-        const filter = `sourceId eq "${this.rolePolicyAnalyserSourceId}"`
-        // Use Accounts API to get the Role Policy Violations stored as accounts in the Role Policy Analyser Source
-        const accountsApi = new AccountsApi(this.apiConfig)
-        const accountsRequest: AccountsApiListAccountsRequest = {
-            filters: filter
-        }
-        try {
-            const accounts = await accountsApi.listAccounts(accountsRequest)
-            logger.debug(`Found ${accounts.data.length} Role Policy Violations`)
-            return accounts.data
-        } catch (err) {
-            let errorMessage = `Error retrieving Role Policy Violations from the Role Policy Analyser Source using ListAccounts API ${JSON.stringify(err)} with request: ${JSON.stringify(accountsRequest)}`
-            logger.error(errorMessage, err)
-            throw new ConnectorError(errorMessage)
-        }
-    }
-
-    // To be used for Delta Aggregation
-    async getExistingRolePolicyViolationsByName(roleName: string): Promise<any> {
-        // Get Role Policy Analyser Source ID
-        await this.getAllRolePolicyViolations()
-        const filter = `sourceId eq "${this.rolePolicyAnalyserSourceId}" and name eq "${roleName}"`
-        // Use Accounts API to get the Policy configuration stored as an account in the Policy Config Source by name
-        const accountsApi = new AccountsApi(this.apiConfig)
-        const accountsRequest: AccountsApiListAccountsRequest = {
-            filters: filter
-        }
-        try {
-            const accounts = await accountsApi.listAccounts(accountsRequest)
-            logger.debug(`Found ${accounts.data.length} Role Policy Violations`)
-            return accounts.data[0]
-        } catch (err) {
-            let errorMessage = `Error retrieving single Role Policy Violations from the Role Policy Analyser Source using ListAccounts API ${JSON.stringify(err)} with request: ${JSON.stringify(accountsRequest)}`
-            logger.error(errorMessage, err)
-            throw new ConnectorError(errorMessage)
+        if (config.excludedPolicies) {
+            this.excludedPolicies = config.excludedPolicies
         }
     }
 
@@ -179,7 +118,7 @@ export class IdnClient {
     // Used as a second option if the specified Simulation Identity
     async findAnyZeroEntitlementIdentity(): Promise<any> {
         const searchApi = new SearchApi(this.apiConfig)
-        let query = "entitlementCount:0"
+        const query = "entitlementCount:0"
         const search: Search = {
             indices: [
                 "identities"
@@ -213,6 +152,7 @@ export class IdnClient {
         }
     }
 
+    // Use either the specified simulation identity or any zero entitlement identity for simulating inherent violations
     async findSimulationIdentityId(): Promise<any> {
         // Find the specified simulation identity
         let simulationIdentity = await this.searchIdentityByAttribute(defaultIdentityResolutionAttribute, this.simulationIdentityName)
@@ -237,39 +177,104 @@ export class IdnClient {
         return
     }
 
-    // Find all Roles in the environment
-    async listAllRoles(): Promise<Role[] | undefined> {
-        const rolesApi = new RolesApi(this.apiConfig)
-        const listRolesRequest: RolesApiListRolesRequest = {}
+    // List all Policies
+    async listAllPolicies(): Promise<SodPolicy[] | undefined> {
+        const policyApi = new SODPolicyApi(this.apiConfig)
+        const listPolicyRequest: SODPolicyApiListSodPoliciesRequest = {}
         try {
-            const allRoles = await rolesApi.listRoles(listRolesRequest)
-            // Check if no roles exists
-            if (allRoles.data.length == 0) {
-                return
+            const allPolicies = await policyApi.listSodPolicies(listPolicyRequest)
+            // Check if no policy already exists
+            if (allPolicies.data) {
+                return allPolicies.data
             } else {
-                return allRoles.data
+                return
             }
         } catch (err) {
-            let errorMessage = `Error listing all Roles using Roles API ${JSON.stringify(err)} with request: ${JSON.stringify(listRolesRequest)}`
+            let errorMessage = `Error listing all Policies using SOD Policy API ${JSON.stringify(err)} with request: ${JSON.stringify(listPolicyRequest)}`
             logger.error(errorMessage, err)
             return
         }
     }
 
-    // Find all Access Profiles in the environment
-    async listAllAccessProfiles(): Promise<AccessProfile[] | undefined> {
+    // Check whether any SOD policies have been modified since the given date
+    async modifiedSodPolicies(lastAggregationDate: string | undefined): Promise<boolean> {
+        let modified: boolean = false
+        if (lastAggregationDate) {
+            // Get all policies
+            const allPolicies = await this.listAllPolicies()
+            if (allPolicies) {
+                // Loop all policies if array returned
+                for (const policy of allPolicies) {
+                    // Exit and return true at the first modified SOD policy found
+                    if (policy.type && policy.type == SodPolicyTypeEnum.ConflictingAccessBased && policy.modified && policy.modified >= lastAggregationDate) {
+                        logger.debug(`Disabling delta processing. Found modified policy ${policy.name} at ${policy.modified}`)
+                        modified = true
+                        break
+                    }
+                }
+            } else {
+                // Return true if undefined due to error fetching policies
+                logger.debug(`Disabling delta processing. No policy array returned ${JSON.stringify(allPolicies)}`)
+                modified = true
+            }
+        } else {
+            // Return true if no date provided
+            logger.debug(`Disabling delta processing. No date provided ${lastAggregationDate}`)
+            modified = true
+        }
+        return modified
+    }
+
+    // Delta Processing can only occur if enabled and no SOD policies have been updated
+    async deltaProcessing(deltaProcessing: boolean, lastAggregationDate: string): Promise<boolean> {
+        return deltaProcessing && !(await this.modifiedSodPolicies(lastAggregationDate))
+    }
+
+    // Find required Access Profiles in the environment
+    async listAccessProfiles(deltaProcessing: boolean, lastAggregationDate?: string): Promise<AccessProfile[] | undefined> {
         const accessProfilesApi = new AccessProfilesApi(this.apiConfig)
-        const listAccessProfilesRequest: AccessProfilesApiListAccessProfilesRequest = {}
+        let listAccessProfilesRequest: AccessProfilesApiListAccessProfilesRequest = {}
+        if (deltaProcessing && lastAggregationDate) {
+            const filter = `modified ge ${lastAggregationDate}`
+            listAccessProfilesRequest = {
+                filters: filter
+            }
+        }
         try {
-            const allAccessProfiles = await accessProfilesApi.listAccessProfiles(listAccessProfilesRequest)
-            // Check if no access profiles exists
-            if (allAccessProfiles.data.length == 0) {
+            const accessProfiles = await accessProfilesApi.listAccessProfiles(listAccessProfilesRequest)
+            // Check if no access profiles were found
+            if (accessProfiles.data.length == 0) {
                 return
             } else {
-                return allAccessProfiles.data
+                return accessProfiles.data
             }
         } catch (err) {
-            let errorMessage = `Error listing all Access Profiles using Access Profiles API ${JSON.stringify(err)} with request: ${JSON.stringify(listAccessProfilesRequest)}`
+            let errorMessage = `Error listing Access Profiles using Access Profiles API ${JSON.stringify(err)} with request: ${JSON.stringify(listAccessProfilesRequest)}`
+            logger.error(errorMessage, err)
+            return
+        }
+    }
+
+    // Find required Roles in the environment
+    async listRoles(deltaProcessing: boolean, lastAggregationDate?: string): Promise<Role[] | undefined> {
+        const rolesApi = new RolesApi(this.apiConfig)
+        let listRolesRequest: RolesApiListRolesRequest = {}
+        if (deltaProcessing && lastAggregationDate) {
+            const filter = `modified ge ${lastAggregationDate}`
+            listRolesRequest = {
+                filters: filter
+            }
+        }
+        try {
+            const roles = await rolesApi.listRoles(listRolesRequest)
+            // Check if no roles were found
+            if (roles.data.length == 0) {
+                return
+            } else {
+                return roles.data
+            }
+        } catch (err) {
+            let errorMessage = `Error listing modified Roles using Roles API ${JSON.stringify(err)} with request: ${JSON.stringify(listRolesRequest)}`
             logger.error(errorMessage, err)
             return
         }
@@ -281,9 +286,9 @@ export class IdnClient {
         return ids
     }
 
-    buildIdFilter(items: any[], prefix: string, joiner: string, suffix: string): string {
+    buildIdFilter(items: any[], prefix: string, joiner: string, itemPrefix: string, suffix: string): string {
         let filter = ""
-        // Add prefix, e.g.: `id in ("`
+        // Add prefix if exists, e.g.: `id in ("`
         if (prefix) {
             filter += prefix
         }
@@ -295,18 +300,21 @@ export class IdnClient {
             } else {
                 filter += joiner
             }
+            // Add item prefix if exists, e.g.: accessProfiles.id:
+            if (itemPrefix) {
+                filter += itemPrefix
+            }
             filter += item.id
         }
-        // Add suffix, e.g.: `")`
+        // Add suffix if exists, e.g.: `")`
         if (suffix) {
             filter += suffix
         }
         return filter
     }
 
-    // Find specified Access Profiles by Id
-    async listAccessProfilesByIds(accessProfiles: any[]): Promise<any> {
-        const filter = this.buildIdFilter(accessProfiles, `id in ("`, `","`, `")`)
+    // Find specified Access Profiles by filter
+    async listAccessProfilesByFilter(filter: string): Promise<AccessProfile[] | undefined> {
         const accessProfilesApi = new AccessProfilesApi(this.apiConfig)
         const listAccessProfilesRequest: AccessProfilesApiListAccessProfilesRequest = {
             filters: filter
@@ -320,7 +328,68 @@ export class IdnClient {
                 return allAccessProfiles.data
             }
         } catch (err) {
-            let errorMessage = `Error listing Access Profiles by IDs using Access Profiles API ${JSON.stringify(err)} with request: ${JSON.stringify(listAccessProfilesRequest)}`
+            let errorMessage = `Error listing Access Profiles by filter using Access Profiles API ${JSON.stringify(err)} with request: ${JSON.stringify(listAccessProfilesRequest)}`
+            logger.error(errorMessage, err)
+            return
+        }
+    }
+
+    // Find specified Roles by filter
+    async listRolesByFilter(filter: string): Promise<Role[] | undefined> {
+        const rolesApi = new RolesApi(this.apiConfig)
+        const listRolesRequest: RolesApiListRolesRequest = {
+            filters: filter
+        }
+        try {
+            const roles = await rolesApi.listRoles(listRolesRequest)
+            // Check if no access profiles exists
+            if (roles.data.length == 0) {
+                return
+            } else {
+                return roles.data
+            }
+        } catch (err) {
+            let errorMessage = `Error listing Roles by filter using Roles API ${JSON.stringify(err)} with request: ${JSON.stringify(listRolesRequest)}`
+            logger.error(errorMessage, err)
+            return
+        }
+    }
+
+    // Find Roles by specified Access Profile Ids
+    async searchRolesByAccessProfileIds(accessProfiles: any[]): Promise<Role[] | undefined> {
+        const query = this.buildIdFilter(accessProfiles, ``, ` OR `, `accessProfiles.id:`, ``)
+        const searchApi = new SearchApi(this.apiConfig)
+        const search: Search = {
+            indices: [
+                "roles"
+            ],
+            query: {
+                query: query
+            },
+            queryResultFilter: {
+                includes: [
+                    "id",
+                    "name",
+                    "owner",
+                    "type",
+                    "accessProfiles"
+                ]
+            },
+            sort: ["id"]
+        }
+        try {
+            const searchRoles = await Paginator.paginateSearchApi(searchApi, search)
+            // Check if no roles exists
+            if (!searchRoles.data || searchRoles.data.length == 0) {
+                return
+            } else {
+                // Cast search results into Role array and return
+                let roles: Role[] = []
+                searchRoles.data.forEach(searchRole => { roles.push(searchRole as Role) });
+                return roles
+            }
+        } catch (err) {
+            let errorMessage = `Error listing specified Roles using Search API ${JSON.stringify(err)} with request: ${JSON.stringify(search)}`
             logger.error(errorMessage, err)
             return
         }
@@ -339,8 +408,6 @@ export class IdnClient {
                 accessProfile.entitlements.forEach(entitlement => effectiveEntitlements.push({ "id": entitlement.id, "name": entitlement.name, "type": entitlement.type, "accessProfileName": accessProfile.name }))
             }
         }
-        // Remove any duplicate entitlements
-        effectiveEntitlements = this.mergeUnique(effectiveEntitlements, [])
         return effectiveEntitlements
     }
 
@@ -403,7 +470,7 @@ export class IdnClient {
     }
 
     // Build the Inherent Violation Object
-    async buildInherentViolationObject(object: any, type: string, effectiveEntitlements: any[], predictedSODViolations: ViolationContext[]): Promise<InherentViolation> {
+    async buildInherentViolationObject(object: any, type: string, effectiveEntitlements: any[], predictedSODViolations: ViolationContext[]): Promise<InherentViolation | undefined> {
         // Create basic InherentViolation object
         let inherentViolation = new InherentViolation(object, type)
 
@@ -414,7 +481,15 @@ export class IdnClient {
             const entitlement = await this.getEntitlementById(effectiveEntitlement.id)
             if (entitlement && entitlement.id) {
                 effectiveEntitlementNames.push(this.buildEntitlementName(entitlement, effectiveEntitlement.accessProfileName))
-                entitlements.set(entitlement.id, {"entitlement": entitlement, "accessProfileName": effectiveEntitlement.accessProfileName})
+                if (entitlements.get(entitlement.id)) {
+                    // Append Access Profile Name to list if the entitlement is part of multiple Access Profiles in a single Role
+                    let accessProfileNames: string[] = entitlements.get(entitlement.id).accessProfileNames
+                    accessProfileNames.push(effectiveEntitlement.accessProfileName)
+                    entitlements.set(entitlement.id, { "entitlement": entitlement, "accessProfileNames": accessProfileNames })
+                } else {
+                    let accessProfileNames: string[] = [effectiveEntitlement.accessProfileName]
+                    entitlements.set(entitlement.id, { "entitlement": entitlement, "accessProfileNames": accessProfileNames })
+                }
             }
         }
 
@@ -422,6 +497,14 @@ export class IdnClient {
         let violatedPolicies: string[] = []
         let violatingEntitlements: string[] = []
         for (const predictedSODViolation of predictedSODViolations) {
+            // Skip policy if excluded
+            if (this.excludedPolicies && predictedSODViolation.policy?.name && this.excludedPolicies.includes(predictedSODViolation.policy?.name)) {
+                continue
+            }
+            // Skip policy if not inclusion list exists and policy is not included
+            if (this.includedPolicies && this.includedPolicies.length > 0 && predictedSODViolation.policy?.name && !this.includedPolicies.includes(predictedSODViolation.policy?.name)) {
+                continue
+            }
             // Append violated policy name 
             if (predictedSODViolation.policy?.name) {
                 violatedPolicies.push(predictedSODViolation.policy?.name)
@@ -432,7 +515,9 @@ export class IdnClient {
                     if (leftCriteriaViolatingEntitlement.id) {
                         const entitlement = entitlements.get(leftCriteriaViolatingEntitlement.id)
                         if (entitlement) {
-                            violatingEntitlements.push(this.buildViolatingEntitlementName(predictedSODViolation.policy, "Left", entitlement.entitlement, entitlement.accessProfileName))
+                            for (const accessProfileName of entitlement.accessProfileNames) {
+                                violatingEntitlements.push(this.buildViolatingEntitlementName(predictedSODViolation.policy, "Left", entitlement.entitlement, accessProfileName))
+                            }
                         } else {
                             logger.error(`Unable to find violating entitlement ${JSON.stringify(leftCriteriaViolatingEntitlement)} in entitlements map`)
                         }
@@ -454,6 +539,11 @@ export class IdnClient {
             }
         }
 
+        // Return nothing if all violated policies are not included / excluded
+        if (violatedPolicies.length == 0) {
+            return
+        }
+
         // Update Inherent Violation Object & return
         inherentViolation.setEffectiveEntitlements(effectiveEntitlementNames)
         inherentViolation.setViolatedPolicies(violatedPolicies)
@@ -461,6 +551,7 @@ export class IdnClient {
         return inherentViolation
     }
 
+    // Analyse a single Role for inherent SOD violations
     async analyseRolePolicyViolations(role: Role): Promise<InherentViolation | undefined> {
         logger.debug(`### Analysing Role [${role.id} - ${role.name}] ###`)
 
@@ -472,7 +563,8 @@ export class IdnClient {
         }
 
         // Fetch extended access profile details
-        let accessProfiles = await this.listAccessProfilesByIds(role.accessProfiles)
+        const filter = this.buildIdFilter(role.accessProfiles, `id in ("`, `","`, ``, `")`)
+        let accessProfiles = await this.listAccessProfilesByFilter(filter)
         if (!accessProfiles) {
             logger.error(`Unable to fetch access profile details for Role [${role.id} - ${role.name}]`)
             return
@@ -497,7 +589,10 @@ export class IdnClient {
         }
 
         // Build Inherent Violation object
-        const inherentViolation = await this.buildInherentViolationObject(role, "ROLE", effectiveEntitlements, predictedSODViolations)
+        const inherentViolation = await this.buildInherentViolationObject(role, defaultTypeRole, effectiveEntitlements, predictedSODViolations)
+        if (!inherentViolation) {
+            return
+        }
         logger.debug(`While analysing Role [${role.id} - ${role.name}], Found Inherent Violations ${JSON.stringify(inherentViolation)}`)
 
         // Return final Inherent Violations object
@@ -505,6 +600,7 @@ export class IdnClient {
         return inherentViolation
     }
 
+    // Analyse a single Access Profile for inherent SOD violations
     async analyseAccessProfilePolicyViolations(accessProfile: AccessProfile): Promise<InherentViolation | undefined> {
         logger.debug(`### Analysing Access Profile [${accessProfile.id} - ${accessProfile.name}] ###`)
 
@@ -526,7 +622,10 @@ export class IdnClient {
         }
 
         // Build Inherent Violation object
-        const inherentViolation = await this.buildInherentViolationObject(accessProfile, "ACCESS_PROFILE", accessProfile.entitlements, predictedSODViolations)
+        const inherentViolation = await this.buildInherentViolationObject(accessProfile, defaultTypeAccessProfile, accessProfile.entitlements, predictedSODViolations)
+        if (!inherentViolation) {
+            return
+        }
         logger.debug(`While analysing Access Profile [${accessProfile.id} - ${accessProfile.name}], Found Inherent Violations ${JSON.stringify(inherentViolation)}`)
 
         // Return final Inherent Violations object
@@ -535,34 +634,16 @@ export class IdnClient {
     }
 
     // Main Account Aggregation function
-    async findInherentRoleViolations(): Promise<any[]> {
+    async findInherentAccessProfileViolations(deltaProcessing: boolean, lastAggregationDate?: string): Promise<any[]> {
         let inherentViolations: Promise<InherentViolation | undefined>[] = []
         // Ensure simulation identity id is present
         if (!this.simulationIdentityId) {
             await this.findSimulationIdentityId()
         }
-        // Analyse all Roles
-        const allRoles = await this.listAllRoles()
-        if (allRoles) {
-            for (const role of allRoles) {
-                // Call analyse function asynchronously
-                inherentViolations.push(this.analyseRolePolicyViolations(role))
-            }
-        }
-        return inherentViolations
-    }
-
-    // Main Account Aggregation function
-    async findInherentAccessProfileViolations(): Promise<any[]> {
-        let inherentViolations: Promise<InherentViolation | undefined>[] = []
-        // Ensure simulation identity id is present
-        if (!this.simulationIdentityId) {
-            await this.findSimulationIdentityId()
-        }
-        // Analyse all Access Profiles
-        const allAccessProfiles = await this.listAllAccessProfiles()
-        if (allAccessProfiles) {
-            for (const accessProfile of allAccessProfiles) {
+        // Analyse required Access Profiles
+        const accessProfiles = await this.listAccessProfiles(deltaProcessing, lastAggregationDate)
+        if (accessProfiles) {
+            for (const accessProfile of accessProfiles) {
                 // Call analyse function asynchronously
                 inherentViolations.push(this.analyseAccessProfilePolicyViolations(accessProfile))
             }
@@ -570,9 +651,77 @@ export class IdnClient {
         return inherentViolations
     }
 
+    // Main Account Aggregation function
+    async findInherentRoleViolations(deltaProcessing: boolean, lastAggregationDate?: string): Promise<any[]> {
+        let inherentViolations: Promise<InherentViolation | undefined>[] = []
+        // Ensure simulation identity id is present
+        if (!this.simulationIdentityId) {
+            await this.findSimulationIdentityId()
+        }
+        // Analyse required Roles
+        const roles = await this.listRoles(deltaProcessing, lastAggregationDate)
+        if (roles) {
+            for (const role of roles) {
+                // Call analyse function asynchronously
+                inherentViolations.push(this.analyseRolePolicyViolations(role))
+            }
+        }
+        // Re-analyze Roles that contain modified Access Profiles in case of delta processing
+        if (deltaProcessing) {
+            const modifiedAccessProfiles = await this.listAccessProfiles(deltaProcessing, lastAggregationDate)
+            if (modifiedAccessProfiles && modifiedAccessProfiles.length > 0) {
+                const modifiedRoles = await this.searchRolesByAccessProfileIds(modifiedAccessProfiles)
+                if (modifiedRoles && modifiedRoles.length > 0) {
+                    for (const modifiedRole of modifiedRoles) {
+                        // Call analyse function asynchronously
+                        inherentViolations.push(this.analyseRolePolicyViolations(modifiedRole))
+                    }
+                }
+            }
+        }
+        return inherentViolations
+    }
+
     // To be used for single account aggregation (check after remediation)
-    async reprocessInherentViolation(identity: string): Promise<any> {
-        return
+    async reprocessInherentViolation(inputId: string): Promise<InherentViolation | undefined> {
+        // Breakdown input ID
+        const idParts = inputId.split(":")
+        if (idParts.length < 2) {
+            logger.error(`Invalid ID format ${inputId}. Expected format type:id`)
+            return
+        }
+        const type = idParts[0]
+        const id = idParts[1]
+
+        // Ensure simulation identity id is present
+        if (!this.simulationIdentityId) {
+            await this.findSimulationIdentityId()
+        }
+
+        // Build the filter
+        let inherentViolation
+        const filter = `id eq "${id}"`
+        if (type == "ROLE") {
+            const roles = await this.listRolesByFilter(filter)
+            if (roles && roles.length > 0) {
+                inherentViolation = await this.analyseRolePolicyViolations(roles[0])
+                if (!inherentViolation) {
+                    inherentViolation = new InherentViolation(roles[0], type)
+                }
+            }
+        } else if (type == "ACCESS_PROFILE") {
+            const accessProfiles = await this.listAccessProfilesByFilter(filter)
+            if (accessProfiles && accessProfiles.length > 0) {
+                inherentViolation = await this.analyseAccessProfilePolicyViolations(accessProfiles[0])
+                if (!inherentViolation) {
+                    inherentViolation = new InherentViolation(accessProfiles[0], type)
+                }
+            }
+        } else {
+            logger.error(`Invalid type format ${type}. Expected ROLE or ACCESS_PROFILE`)
+            return
+        }
+        return inherentViolation
     }
 
     async testConnection(): Promise<any> {

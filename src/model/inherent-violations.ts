@@ -1,26 +1,25 @@
-import { Attributes, Key, Permission, SimpleKey, StdAccountListOutput } from "@sailpoint/connector-sdk"
+import { Attributes, Key, SimpleKey, StdAccountListOutput, StdAccountReadOutput } from "@sailpoint/connector-sdk"
 
-export class InherentViolation implements StdAccountListOutput {
+export class InherentViolation implements StdAccountListOutput, StdAccountReadOutput {
     identity?: string | undefined
-    uuid?: string | undefined
     key?: Key | undefined
     disabled?: boolean | undefined
     locked?: boolean | undefined
     deleted?: boolean | undefined
     attributes: Attributes
-    permissions?: Permission[] | undefined
 
     constructor(object: any, type: string) {
         this.identity = `${type}: ${object.name}`
-        this.key = SimpleKey(object.id as string)
+        this.key = SimpleKey(`${type}:${object.id}`)
         this.attributes = {
-            id: object.id,
-            name: object.name,
-            type: type,
+            id: this.key.simple.id,
             displayName: this.identity,
-            description: object.description,
-            ownerId: object.owner.id,
-            ownerName: object.owner.name,
+            objectId: object.id,
+            objectName: object.name,
+            objectType: type,
+            objectDescription: object.description,
+            objectOwnerId: object.owner.id,
+            objectOwnerName: object.owner.name,
             effectiveEntitlements: [],
             violatedPolicies: [],
             violatingEntitlements: [],
