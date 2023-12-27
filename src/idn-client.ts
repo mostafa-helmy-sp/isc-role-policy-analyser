@@ -1,5 +1,4 @@
 import {
-    CommandState,
     logger
 } from "@sailpoint/connector-sdk"
 import {
@@ -25,8 +24,7 @@ import {
     SODPolicyApi,
     SODPolicyApiListSodPoliciesRequest,
     SodPolicy,
-    SodPolicyTypeEnum,
-    RoleDocument
+    SodPolicyTypeEnum
 } from "sailpoint-api-client"
 import { InherentViolation } from "./model/inherent-violations"
 
@@ -539,11 +537,6 @@ export class IdnClient {
             }
         }
 
-        // Return nothing if all violated policies are not included / excluded
-        if (violatedPolicies.length == 0) {
-            return
-        }
-
         // Update Inherent Violation Object & return
         inherentViolation.setEffectiveEntitlements(effectiveEntitlementNames)
         inherentViolation.setViolatedPolicies(violatedPolicies)
@@ -704,6 +697,7 @@ export class IdnClient {
         if (type == "ROLE") {
             const roles = await this.listRolesByFilter(filter)
             if (roles && roles.length > 0) {
+                // Process the first role in the array (only expecting one result in search by ID)
                 inherentViolation = await this.analyseRolePolicyViolations(roles[0])
                 if (!inherentViolation) {
                     inherentViolation = new InherentViolation(roles[0], type)
@@ -712,6 +706,7 @@ export class IdnClient {
         } else if (type == "ACCESS_PROFILE") {
             const accessProfiles = await this.listAccessProfilesByFilter(filter)
             if (accessProfiles && accessProfiles.length > 0) {
+                // Process the first access profile in the array (only expecting one result in search by ID)
                 inherentViolation = await this.analyseAccessProfilePolicyViolations(accessProfiles[0])
                 if (!inherentViolation) {
                     inherentViolation = new InherentViolation(accessProfiles[0], type)

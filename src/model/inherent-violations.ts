@@ -26,16 +26,24 @@ export class InherentViolation implements StdAccountListOutput, StdAccountReadOu
         }
     }
 
+    getEffectiveEntitlements(): any {
+        return this.attributes.effectiveEntitlements
+    }
+
     setEffectiveEntitlements(effectiveEntitlements: string[]) {
         this.attributes.effectiveEntitlements = effectiveEntitlements
     }
 
-    addViolatedPolicy(violatedPolicies: string[]) {
-        this.attributes.violatedPolicies = violatedPolicies
+    getViolatedPolicies(): any {
+        return this.attributes.violatedPolicies
     }
 
     setViolatedPolicies(violatedPolicies: string[]) {
         this.attributes.violatedPolicies = violatedPolicies
+    }
+
+    getViolatingEntitlements(): any {
+        return this.attributes.violatingEntitlements
     }
 
     setViolatingEntitlements(violatingEntitlements: string[]) {

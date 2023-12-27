@@ -11,7 +11,6 @@ import {
     CommandState,
     StdAccountReadInput,
     StdAccountReadOutput,
-    SimpleKey,
     SimpleKeyType,
 } from '@sailpoint/connector-sdk'
 import { IdnClient } from './idn-client'
@@ -62,9 +61,9 @@ export const connector = async () => {
             let inherentViolations = await idnClient.findInherentAccessProfileViolations(deltaProcessing, lastAggregationDate)
             let analysedAccessProfiles = inherentViolations.length
             for (const inherentViolation of inherentViolations) {
-                // Await each analysis result, send if not null (i.e. inherent violation exists)
+                // Await each analysis result, send if not null and has violated policies (i.e. inherent violation exists)
                 let result: InherentViolation | undefined = await inherentViolation
-                if (result) {
+                if (result && result.getViolatedPolicies() && Array.isArray(result.getViolatedPolicies()) && result.getViolatedPolicies().length > 0) {
                     res.send(result)
                     accessProfileViolations++
                 }
@@ -78,7 +77,7 @@ export const connector = async () => {
             for (const inherentViolation of inherentViolations) {
                 // Await each analysis result, send if not null (i.e. inherent violation exists)
                 let result: InherentViolation | undefined = await inherentViolation
-                if (result) {
+                if (result && result.getViolatedPolicies() && Array.isArray(result.getViolatedPolicies()) && result.getViolatedPolicies().length > 0) {
                     res.send(result)
                     roleViolations++
                 }
