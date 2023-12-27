@@ -35,6 +35,8 @@ var tokenUrlPath = "/oauth/token"
 var defaultIdentityResolutionAttribute = "name"
 var defaultTypeRole = "ROLE"
 var defaultTypeAccessProfile = "ACCESS_PROFILE"
+var defaultLeft = "Left"
+var defaultRight = "Right"
 
 export class IdnClient {
 
@@ -514,7 +516,7 @@ export class IdnClient {
                         const entitlement = entitlements.get(leftCriteriaViolatingEntitlement.id)
                         if (entitlement) {
                             for (const accessProfileName of entitlement.accessProfileNames) {
-                                violatingEntitlements.push(this.buildViolatingEntitlementName(predictedSODViolation.policy, "Left", entitlement.entitlement, accessProfileName))
+                                violatingEntitlements.push(this.buildViolatingEntitlementName(predictedSODViolation.policy, defaultLeft, entitlement.entitlement, accessProfileName))
                             }
                         } else {
                             logger.error(`Unable to find violating entitlement ${JSON.stringify(leftCriteriaViolatingEntitlement)} in entitlements map`)
@@ -528,7 +530,9 @@ export class IdnClient {
                     if (rightCriteriaViolatingEntitlement.id) {
                         const entitlement = entitlements.get(rightCriteriaViolatingEntitlement.id)
                         if (entitlement) {
-                            violatingEntitlements.push(this.buildViolatingEntitlementName(predictedSODViolation.policy, "Right", entitlement.entitlement, entitlement.accessProfileName))
+                            for (const accessProfileName of entitlement.accessProfileNames) {
+                                violatingEntitlements.push(this.buildViolatingEntitlementName(predictedSODViolation.policy, defaultRight, entitlement.entitlement, accessProfileName))
+                            }
                         } else {
                             logger.error(`Unable to find violating entitlement ${JSON.stringify(rightCriteriaViolatingEntitlement)} in entitlements map`)
                         }
