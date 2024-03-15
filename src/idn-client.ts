@@ -495,15 +495,15 @@ export class IdnClient {
     buildEntitlementName(entitlement: EntitlementBeta, accessProfileName?: string): string {
         let entitlementName = `${entitlement.name} (${entitlement.source?.name} - ${entitlement.sourceSchemaObjectType})`
         if (accessProfileName) {
-            entitlementName += ` from Access Profile [${accessProfileName}]`
+            entitlementName += ` - from Access Profile: [${accessProfileName}]`
         } else {
-            entitlementName += ` directly`
+            entitlementName += ` - directly`
         }
         return entitlementName
     }
 
     buildViolatingEntitlementName(policy: any, criteria: string, entitlement: EntitlementBeta, accessProfileName?: string): string {
-        return `Policy [${policy.name}] ${criteria} Criteria Entitlement: ${this.buildEntitlementName(entitlement, accessProfileName)}`
+        return `Policy: [${policy.name}] - ${criteria} Criteria Entitlement: [${this.buildEntitlementName(entitlement, accessProfileName)}]`
     }
 
     // Build the Inherent Violation Object
