@@ -24,17 +24,18 @@ import {
     SODPolicyApi,
     SODPolicyApiListSodPoliciesRequest,
     SodPolicy,
-    SodPolicyTypeEnum
+    SodPolicyTypeEnum,
+    DtoType,
+    Index
 } from "sailpoint-api-client"
 import { InherentViolation } from "./model/inherent-violations"
+import axiosRetry from "axios-retry"
 
 // Set IDN Global Variables
 var tokenUrlPath = "/oauth/token"
 
 // Set Source Config Global Defaults
 var defaultIdentityResolutionAttribute = "name"
-var defaultTypeRole = "ROLE"
-var defaultTypeAccessProfile = "ACCESS_PROFILE"
 var defaultLeft = "Left"
 var defaultRight = "Right"
 
@@ -56,7 +57,17 @@ export class IdnClient {
         }
         this.apiConfig = new Configuration(ConfigurationParameters)
         this.apiConfig.retriesConfig = {
-            retries: 3
+            retries: 10,
+            // retryDelay: (retryCount) => { return retryCount * 2000; },
+            retryDelay: (retryCount, error) => axiosRetry.exponentialDelay(retryCount, error, 2000),
+            retryCondition: (error) => {
+                return axiosRetry.isNetworkError(error) ||
+                    axiosRetry.isRetryableError(error) ||
+                    error.response?.status === 429;
+            },
+            onRetry: (retryCount, error, requestConfig) => {
+                logger.debug(`Retrying API [${requestConfig.url}] due to request error: [${error}]. Try number [${retryCount}]`)
+            }
         }
         // configure the rest of the source parameters
         this.simulationIdentityName = config.simulationIdentityName
@@ -79,7 +90,7 @@ export class IdnClient {
         }
         const search: Search = {
             indices: [
-                "identities"
+                Index.Identities
             ],
             query: {
                 query: query
@@ -101,16 +112,18 @@ export class IdnClient {
                 return
             } else {
                 // Use the first identity and ensure it has no entitlements
-                const identity: IdentityDocument = identities.data[0]
+                const identity = identities.data[0] as IdentityDocument
                 if (identity.entitlementCount != 0) {
                     return
                 } else {
-                    return { "id": identity.id, "name": identity.name, "type": identity._type.toUpperCase() }
+                    return { id: identity.id, name: identity.name, type: identity._type.toUpperCase() }
                 }
             }
         } catch (err) {
-            let errorMessage = `Error finding identity using Search API ${JSON.stringify(err)} with request: ${JSON.stringify(search)}`
+            let errorMessage = `Error finding identity using Search API ${JSON.stringify(err)}`
+            let debugMessage = `Failed Search API request: ${JSON.stringify(search)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -121,7 +134,7 @@ export class IdnClient {
         const query = "entitlementCount:0"
         const search: Search = {
             indices: [
-                "identities"
+                Index.Identities
             ],
             query: {
                 query: query
@@ -142,12 +155,14 @@ export class IdnClient {
                 return
             } else {
                 // Use the first identity if more than one match
-                const identity: IdentityDocument = identities.data[0]
-                return { "id": identity.id, "name": identity.name, "type": identity._type.toUpperCase() }
+                const identity = identities.data[0] as IdentityDocument
+                return { id: identity.id, name: identity.name, type: identity._type.toUpperCase() }
             }
         } catch (err) {
-            let errorMessage = `Error finding identity using Search API ${JSON.stringify(err)} with request: ${JSON.stringify(search)}`
+            let errorMessage = `Error finding identity using Search API ${JSON.stringify(err)}`
+            let debugMessage = `Failed Search API request: ${JSON.stringify(search)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -190,8 +205,10 @@ export class IdnClient {
                 return
             }
         } catch (err) {
-            let errorMessage = `Error listing all Policies using SOD Policy API ${JSON.stringify(err)} with request: ${JSON.stringify(listPolicyRequest)}`
+            let errorMessage = `Error listing all Policies using SOD Policy API ${JSON.stringify(err)}`
+            let debugMessage = `Failed SOD Policy API request: ${JSON.stringify(listPolicyRequest)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -249,8 +266,10 @@ export class IdnClient {
                 return accessProfiles.data
             }
         } catch (err) {
-            let errorMessage = `Error listing Access Profiles using Access Profiles API ${JSON.stringify(err)} with request: ${JSON.stringify(listAccessProfilesRequest)}`
+            let errorMessage = `Error listing Access Profiles using Access Profiles API ${JSON.stringify(err)}`
+            let debugMessage = `Failed Access Profiles API request: ${JSON.stringify(listAccessProfilesRequest)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -274,14 +293,16 @@ export class IdnClient {
                 return roles.data
             }
         } catch (err) {
-            let errorMessage = `Error listing modified Roles using Roles API ${JSON.stringify(err)} with request: ${JSON.stringify(listRolesRequest)}`
+            let errorMessage = `Error listing modified Roles using Roles API ${JSON.stringify(err)}`
+            let debugMessage = `Failed Roles API request: ${JSON.stringify(listRolesRequest)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
 
-    buildIdArray(items: any[]): any[] {
-        let ids: any[] = []
+    buildIdArray(items: any[]): string[] {
+        let ids: string[] = []
         items.forEach(item => ids.push(item.id))
         return ids
     }
@@ -328,8 +349,10 @@ export class IdnClient {
                 return allAccessProfiles.data
             }
         } catch (err) {
-            let errorMessage = `Error listing Access Profiles by filter using Access Profiles API ${JSON.stringify(err)} with request: ${JSON.stringify(listAccessProfilesRequest)}`
+            let errorMessage = `Error listing Access Profiles by filter using Access Profiles API ${JSON.stringify(err)}`
+            let debugMessage = `Failed Access Profiles API request: ${JSON.stringify(listAccessProfilesRequest)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -349,8 +372,10 @@ export class IdnClient {
                 return roles.data
             }
         } catch (err) {
-            let errorMessage = `Error listing Roles by filter using Roles API ${JSON.stringify(err)} with request: ${JSON.stringify(listRolesRequest)}`
+            let errorMessage = `Error listing Roles by filter using Roles API ${JSON.stringify(err)}`
+            let debugMessage = `Failed Roles API request: ${JSON.stringify(listRolesRequest)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -361,7 +386,7 @@ export class IdnClient {
         const searchApi = new SearchApi(this.apiConfig)
         const search: Search = {
             indices: [
-                "roles"
+                Index.Roles
             ],
             query: {
                 query: query
@@ -389,8 +414,10 @@ export class IdnClient {
                 return roles
             }
         } catch (err) {
-            let errorMessage = `Error listing specified Roles using Search API ${JSON.stringify(err)} with request: ${JSON.stringify(search)}`
+            let errorMessage = `Error listing specified Roles using Search API ${JSON.stringify(err)}`
+            let debugMessage = `Failed Search API request: ${JSON.stringify(search)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -400,12 +427,16 @@ export class IdnClient {
     }
 
     // Aggregate effective entitlements from access profile list
-    getEffectiveEntitlements(accessProfiles: AccessProfile[]): any {
+    getEffectiveEntitlements(role: Role, accessProfiles: AccessProfile[]): any[] {
+        // TODO - Temp workaround casting role as any, till the SDK is updated to include direct role entitlements in the Role interface
         let effectiveEntitlements: any[] = []
+        if (role.entitlements) {
+            effectiveEntitlements = role.entitlements
+        }
         for (const accessProfile of accessProfiles) {
             // Skip Access Profiles with no entitlements
             if (accessProfile.entitlements && accessProfile.entitlements.length > 0) {
-                accessProfile.entitlements.forEach(entitlement => effectiveEntitlements.push({ "id": entitlement.id, "name": entitlement.name, "type": entitlement.type, "accessProfileName": accessProfile.name }))
+                accessProfile.entitlements.forEach(entitlement => effectiveEntitlements.push({ id: entitlement.id, name: entitlement.name, type: entitlement.type, accessProfileName: accessProfile.name }))
             }
         }
         return effectiveEntitlements
@@ -430,8 +461,10 @@ export class IdnClient {
                 return predictedSODViolations.data.violationContexts
             }
         } catch (err) {
-            let errorMessage = `Error predicting SOD Violations using SOD Violations API ${JSON.stringify(err)} with request: ${JSON.stringify(predictSodViolationsRequest)}`
+            let errorMessage = `Error predicting SOD Violations using SOD Violations API ${JSON.stringify(err)}`
+            let debugMessage = `Failed SOD Violations API request: ${JSON.stringify(predictSodViolationsRequest)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -451,8 +484,10 @@ export class IdnClient {
                 return entitlement.data
             }
         } catch (err) {
-            let errorMessage = `Error finding Entitlement by IDs using Entitlements Beta API ${JSON.stringify(err)} with request: ${JSON.stringify(getEntitlementRequest)}`
+            let errorMessage = `Error finding Entitlement by IDs using Entitlements Beta API ${JSON.stringify(err)}`
+            let debugMessage = `Failed Entitlements Beta API request: ${JSON.stringify(getEntitlementRequest)}`
             logger.error(errorMessage, err)
+            logger.debug(debugMessage)
             return
         }
     }
@@ -461,6 +496,8 @@ export class IdnClient {
         let entitlementName = `${entitlement.name} (${entitlement.source?.name} - ${entitlement.sourceSchemaObjectType})`
         if (accessProfileName) {
             entitlementName += ` from Access Profile [${accessProfileName}]`
+        } else {
+            entitlementName += ` directly`
         }
         return entitlementName
     }
@@ -485,10 +522,10 @@ export class IdnClient {
                     // Append Access Profile Name to list if the entitlement is part of multiple Access Profiles in a single Role
                     let accessProfileNames: string[] = entitlements.get(entitlement.id).accessProfileNames
                     accessProfileNames.push(effectiveEntitlement.accessProfileName)
-                    entitlements.set(entitlement.id, { "entitlement": entitlement, "accessProfileNames": accessProfileNames })
+                    entitlements.set(entitlement.id, { entitlement: entitlement, accessProfileNames: accessProfileNames })
                 } else {
                     let accessProfileNames: string[] = [effectiveEntitlement.accessProfileName]
-                    entitlements.set(entitlement.id, { "entitlement": entitlement, "accessProfileNames": accessProfileNames })
+                    entitlements.set(entitlement.id, { entitlement: entitlement, accessProfileNames: accessProfileNames })
                 }
             }
         }
@@ -568,7 +605,7 @@ export class IdnClient {
         }
 
         // Travese access profiles to aggregate the list of effective entitlements
-        let effectiveEntitlements = this.getEffectiveEntitlements(accessProfiles)
+        let effectiveEntitlements = this.getEffectiveEntitlements(role, accessProfiles)
         if (effectiveEntitlements.length < 2) {
             logger.debug(`Skipping Role [${role.id} - ${role.name}]. Not enough Entitlements to cause SOD violations.`)
             logger.debug(`### Finished analysing Role [${role.id} - ${role.name}] ###`)
@@ -586,7 +623,7 @@ export class IdnClient {
         }
 
         // Build Inherent Violation object
-        const inherentViolation = await this.buildInherentViolationObject(role, defaultTypeRole, effectiveEntitlements, predictedSODViolations)
+        const inherentViolation = await this.buildInherentViolationObject(role, DtoType.Role, effectiveEntitlements, predictedSODViolations)
         if (!inherentViolation) {
             return
         }
@@ -619,7 +656,7 @@ export class IdnClient {
         }
 
         // Build Inherent Violation object
-        const inherentViolation = await this.buildInherentViolationObject(accessProfile, defaultTypeAccessProfile, accessProfile.entitlements, predictedSODViolations)
+        const inherentViolation = await this.buildInherentViolationObject(accessProfile, DtoType.AccessProfile, accessProfile.entitlements, predictedSODViolations)
         if (!inherentViolation) {
             return
         }
@@ -698,7 +735,7 @@ export class IdnClient {
         // Build the filter
         let inherentViolation
         const filter = `id eq "${id}"`
-        if (type == "ROLE") {
+        if (type == DtoType.Role) {
             const roles = await this.listRolesByFilter(filter)
             if (roles && roles.length > 0) {
                 // Process the first role in the array (only expecting one result in search by ID)
@@ -707,7 +744,7 @@ export class IdnClient {
                     inherentViolation = new InherentViolation(roles[0], type)
                 }
             }
-        } else if (type == "ACCESS_PROFILE") {
+        } else if (type == DtoType.AccessProfile) {
             const accessProfiles = await this.listAccessProfilesByFilter(filter)
             if (accessProfiles && accessProfiles.length > 0) {
                 // Process the first access profile in the array (only expecting one result in search by ID)
