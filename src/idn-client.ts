@@ -61,9 +61,7 @@ export class IdnClient {
             // retryDelay: (retryCount) => { return retryCount * 2000; },
             retryDelay: (retryCount, error) => axiosRetry.exponentialDelay(retryCount, error, 2000),
             retryCondition: (error) => {
-                return axiosRetry.isNetworkError(error) ||
-                    axiosRetry.isRetryableError(error) ||
-                    error.response?.status === 429;
+                return error.response?.status === 429;
             },
             onRetry: (retryCount, error, requestConfig) => {
                 logger.debug(`Retrying API [${requestConfig.url}] due to request error: [${error}]. Try number [${retryCount}]`)
@@ -119,10 +117,10 @@ export class IdnClient {
                     return { id: identity.id, name: identity.name, type: identity._type.toUpperCase() }
                 }
             }
-        } catch (err) {
-            let errorMessage = `Error finding identity using Search API ${JSON.stringify(err)}`
-            let debugMessage = `Failed Search API request: ${JSON.stringify(search)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error finding identity using Search API ${(error as Error).message}`
+            let debugMessage = `Failed Search API request: ${JSON.stringify(error)}`
+            logger.error(search, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -158,10 +156,10 @@ export class IdnClient {
                 const identity = identities.data[0] as IdentityDocument
                 return { id: identity.id, name: identity.name, type: identity._type.toUpperCase() }
             }
-        } catch (err) {
-            let errorMessage = `Error finding identity using Search API ${JSON.stringify(err)}`
-            let debugMessage = `Failed Search API request: ${JSON.stringify(search)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error finding identity using Search API ${(error as Error).message}`
+            let debugMessage = `Failed Search API request: ${JSON.stringify(error)}`
+            logger.error(search, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -197,17 +195,17 @@ export class IdnClient {
         const policyApi = new SODPolicyApi(this.apiConfig)
         const listPolicyRequest: SODPolicyApiListSodPoliciesRequest = {}
         try {
-            const allPolicies = await policyApi.listSodPolicies(listPolicyRequest)
+            const allPolicies = await Paginator.paginate(policyApi, policyApi.listSodPolicies)
             // Check if no policy already exists
             if (allPolicies.data) {
                 return allPolicies.data
             } else {
                 return
             }
-        } catch (err) {
-            let errorMessage = `Error listing all Policies using SOD Policy API ${JSON.stringify(err)}`
-            let debugMessage = `Failed SOD Policy API request: ${JSON.stringify(listPolicyRequest)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error listing all Policies using SOD Policy API ${(error as Error).message}`
+            let debugMessage = `Failed SOD Policy API request: ${JSON.stringify(error)}`
+            logger.error(listPolicyRequest, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -251,24 +249,26 @@ export class IdnClient {
     async listAccessProfiles(deltaProcessing: boolean, lastAggregationDate?: string): Promise<AccessProfile[] | undefined> {
         const accessProfilesApi = new AccessProfilesApi(this.apiConfig)
         let listAccessProfilesRequest: AccessProfilesApiListAccessProfilesRequest = {}
+        let parameters = {}
         if (deltaProcessing && lastAggregationDate) {
             const filter = `modified ge ${lastAggregationDate}`
+            parameters = { filters: filter }
             listAccessProfilesRequest = {
                 filters: filter
             }
         }
         try {
-            const accessProfiles = await accessProfilesApi.listAccessProfiles(listAccessProfilesRequest)
+            const accessProfiles = await Paginator.paginate(accessProfilesApi, accessProfilesApi.listAccessProfiles, parameters)
             // Check if no access profiles were found
             if (accessProfiles.data.length == 0) {
                 return
             } else {
                 return accessProfiles.data
             }
-        } catch (err) {
-            let errorMessage = `Error listing Access Profiles using Access Profiles API ${JSON.stringify(err)}`
-            let debugMessage = `Failed Access Profiles API request: ${JSON.stringify(listAccessProfilesRequest)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error listing Access Profiles using Access Profiles API ${(error as Error).message}`
+            let debugMessage = `Failed Access Profiles API request: ${JSON.stringify(error)}`
+            logger.error(listAccessProfilesRequest, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -278,24 +278,26 @@ export class IdnClient {
     async listRoles(deltaProcessing: boolean, lastAggregationDate?: string): Promise<Role[] | undefined> {
         const rolesApi = new RolesApi(this.apiConfig)
         let listRolesRequest: RolesApiListRolesRequest = {}
+        let parameters = {}
         if (deltaProcessing && lastAggregationDate) {
             const filter = `modified ge ${lastAggregationDate}`
+            parameters = { filters: filter }
             listRolesRequest = {
                 filters: filter
             }
         }
         try {
-            const roles = await rolesApi.listRoles(listRolesRequest)
+            const roles = await Paginator.paginate(rolesApi, rolesApi.listRoles, parameters)
             // Check if no roles were found
             if (roles.data.length == 0) {
                 return
             } else {
                 return roles.data
             }
-        } catch (err) {
-            let errorMessage = `Error listing modified Roles using Roles API ${JSON.stringify(err)}`
-            let debugMessage = `Failed Roles API request: ${JSON.stringify(listRolesRequest)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error listing modified Roles using Roles API ${(error as Error).message}`
+            let debugMessage = `Failed Roles API request: ${JSON.stringify(error)}`
+            logger.error(listRolesRequest, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -341,17 +343,17 @@ export class IdnClient {
             filters: filter
         }
         try {
-            const allAccessProfiles = await accessProfilesApi.listAccessProfiles(listAccessProfilesRequest)
+            const allAccessProfiles = await Paginator.paginate(accessProfilesApi, accessProfilesApi.listAccessProfiles, { filters: filter })
             // Check if no access profiles exists
             if (allAccessProfiles.data.length == 0) {
                 return
             } else {
                 return allAccessProfiles.data
             }
-        } catch (err) {
-            let errorMessage = `Error listing Access Profiles by filter using Access Profiles API ${JSON.stringify(err)}`
-            let debugMessage = `Failed Access Profiles API request: ${JSON.stringify(listAccessProfilesRequest)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error listing Access Profiles by filter using Access Profiles API ${(error as Error).message}`
+            let debugMessage = `Failed Access Profiles API request: ${JSON.stringify(error)}`
+            logger.error(listAccessProfilesRequest, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -364,17 +366,17 @@ export class IdnClient {
             filters: filter
         }
         try {
-            const roles = await rolesApi.listRoles(listRolesRequest)
+            const roles = await Paginator.paginate(rolesApi, rolesApi.listRoles, { filters: filter })
             // Check if no access profiles exists
             if (roles.data.length == 0) {
                 return
             } else {
                 return roles.data
             }
-        } catch (err) {
-            let errorMessage = `Error listing Roles by filter using Roles API ${JSON.stringify(err)}`
-            let debugMessage = `Failed Roles API request: ${JSON.stringify(listRolesRequest)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error listing Roles by filter using Roles API ${(error as Error).message}`
+            let debugMessage = `Failed Roles API request: ${JSON.stringify(error)}`
+            logger.error(listRolesRequest, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -413,10 +415,10 @@ export class IdnClient {
                 searchRoles.data.forEach(searchRole => { roles.push(searchRole as Role) });
                 return roles
             }
-        } catch (err) {
-            let errorMessage = `Error listing specified Roles using Search API ${JSON.stringify(err)}`
-            let debugMessage = `Failed Search API request: ${JSON.stringify(search)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error listing specified Roles using Search API ${(error as Error).message}`
+            let debugMessage = `Failed Search API request: ${JSON.stringify(error)}`
+            logger.error(search, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -460,10 +462,10 @@ export class IdnClient {
                 predictedSODViolations as ViolationPrediction
                 return predictedSODViolations.data.violationContexts
             }
-        } catch (err) {
-            let errorMessage = `Error predicting SOD Violations using SOD Violations API ${JSON.stringify(err)}`
-            let debugMessage = `Failed SOD Violations API request: ${JSON.stringify(predictSodViolationsRequest)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error predicting SOD Violations using SOD Violations API ${(error as Error).message}`
+            let debugMessage = `Failed SOD Violations API request: ${JSON.stringify(error)}`
+            logger.error(predictSodViolationsRequest, errorMessage)
             logger.debug(debugMessage)
             return
         }
@@ -483,10 +485,10 @@ export class IdnClient {
             } else {
                 return entitlement.data
             }
-        } catch (err) {
-            let errorMessage = `Error finding Entitlement by IDs using Entitlements Beta API ${JSON.stringify(err)}`
-            let debugMessage = `Failed Entitlements Beta API request: ${JSON.stringify(getEntitlementRequest)}`
-            logger.error(errorMessage, err)
+        } catch (error) {
+            let errorMessage = `Error finding Entitlement by IDs using Entitlements Beta API ${(error as Error).message}`
+            let debugMessage = `Failed Entitlements Beta API request: ${JSON.stringify(error)}`
+            logger.error(getEntitlementRequest, errorMessage)
             logger.debug(debugMessage)
             return
         }
