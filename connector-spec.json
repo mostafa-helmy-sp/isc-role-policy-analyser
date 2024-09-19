@@ -95,8 +95,14 @@
 				{
 					"type": "section",
 					"sectionTitle": "Task Processing",
-					"sectionHelpMessage": "Use these features to configure administrator settings and troubleshoot issues with the connector. Check Enable Debug Logging to enable the connector to create and send debug log files to SailPoint Support to help troubleshoot issues.",
+					"sectionHelpMessage": "Use these features to configure administrator settings and troubleshoot issues with the connector. Check Enable Parallel Processing the run the task in a multi-threaded approach, processing each policy in parallel. Unchecking Enable Parallel Processing will process roles and access profiles in a single thread. Check Enable Debug Logging to enable the connector to create and send debug log files to SailPoint Support to help troubleshoot issues.",
 					"items": [
+						{
+							"key": "parallelProcessing",
+							"type": "checkbox",
+							"label": "Enable Parallel Processing",
+							"required": true
+						},
 						{
 							"key": "spConnDebugLoggingEnabled",
 							"type": "checkbox",

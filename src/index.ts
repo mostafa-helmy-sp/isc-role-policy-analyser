@@ -14,8 +14,12 @@ import {
     SimpleKeyType,
     StdTestConnectionInput,
 } from '@sailpoint/connector-sdk'
-import { IdnClient } from './idn-client'
+import { IscClient } from './isc-client'
 import { InherentViolation } from './model/inherent-violations'
+
+function hasViolations(inherentViolation: InherentViolation): boolean {
+    return inherentViolation.getViolatedPolicies() && Array.isArray(inherentViolation.getViolatedPolicies()) && inherentViolation.getViolatedPolicies().length > 0
+}
 
 // Connector must be exported as module property named connector
 export const connector = async () => {
@@ -24,11 +28,11 @@ export const connector = async () => {
     const config = await readConfig()
 
     // Using SailPoint's TypeScript SDK to initialize the client
-    const idnClient = new IdnClient(config)
+    const iscClient = new IscClient(config)
 
     return createConnector()
         .stdTestConnection(async (context: Context, input: StdTestConnectionInput, res: Response<StdTestConnectionOutput>) => {
-            const response = await idnClient.testConnection()
+            const response = await iscClient.testConnection()
             if (response) {
                 throw new ConnectorError(response)
             } else {
@@ -51,49 +55,105 @@ export const connector = async () => {
             }
 
             // Check if delta processing is possible
-            deltaProcessing = await idnClient.deltaProcessing(deltaProcessing, lastAggregationDate)
+            deltaProcessing = await iscClient.deltaProcessing(deltaProcessing, lastAggregationDate)
 
             logger.debug(`stdAccountList at ${state.lastAggregationDate}: Delta Processing: ${deltaProcessing}, Last Aggregation Date: ${lastAggregationDate}`)
 
-            // Initialize metrics variables
+            // Ensure simulation identity id is present
+            await iscClient.findSimulationIdentityId()
 
-            // Start async analysis of access profiles
-            let accessProfileViolations = 0
-            let inherentViolations = await idnClient.findInherentAccessProfileViolations(deltaProcessing, lastAggregationDate)
-            let analysedAccessProfiles = inherentViolations.length
-            for (const inherentViolation of inherentViolations) {
-                // Await each analysis result, send if not null and has violated policies (i.e. inherent violation exists)
-                let result: InherentViolation | undefined = await inherentViolation
-                if (result && result.getViolatedPolicies() && Array.isArray(result.getViolatedPolicies()) && result.getViolatedPolicies().length > 0) {
-                    res.send(result)
-                    accessProfileViolations++
+            // Initialize metrics
+            let inherentViolations: Promise<InherentViolation | undefined>[] = []
+            let detectedViolations = 0
+            let analysedObjects = 0
+
+            if (iscClient.isParallelProcessing()) {
+                logger.info(`stdAccountList running in parallel mode`)
+            } else {
+                logger.info(`stdAccountList running in serial mode`)
+            }
+
+            // Analyse required Access Profiles
+            const accessProfiles = await iscClient.listAccessProfiles(deltaProcessing, lastAggregationDate)
+            if (accessProfiles) {
+                analysedObjects += accessProfiles.length
+                for (const accessProfile of accessProfiles) {
+                    if (iscClient.isParallelProcessing()) {
+                        // Call analyse function asynchronously
+                        inherentViolations.push(iscClient.analyseAccessProfilePolicyViolations(accessProfile))
+                    } else {
+                        let inherentViolation = await iscClient.analyseAccessProfilePolicyViolations(accessProfile)
+                        // Only return if violation exists
+                        if (inherentViolation && hasViolations(inherentViolation)) {
+                            detectedViolations++
+                            res.send(inherentViolation)
+                        }
+                    }
                 }
             }
-            logger.info(`stdAccountList at ${state.lastAggregationDate}: out of ${analysedAccessProfiles} analysed Access Profiles, ${accessProfileViolations} inherent violations found`)
 
-            // Start async analysis of roles
-            let roleViolations = 0
-            inherentViolations = await idnClient.findInherentRoleViolations(deltaProcessing, lastAggregationDate)
-            let analysedRoles = inherentViolations.length
-            for (const inherentViolation of inherentViolations) {
-                // Await each analysis result, send if not null (i.e. inherent violation exists)
-                let result: InherentViolation | undefined = await inherentViolation
-                if (result && result.getViolatedPolicies() && Array.isArray(result.getViolatedPolicies()) && result.getViolatedPolicies().length > 0) {
-                    res.send(result)
-                    roleViolations++
+            // Analyse required Roles
+            const roles = await iscClient.listRoles(deltaProcessing, lastAggregationDate)
+            if (roles) {
+                analysedObjects += roles.length
+                for (const role of roles) {
+                    if (iscClient.isParallelProcessing()) {
+                        // Call analyse function asynchronously
+                        inherentViolations.push(iscClient.analyseRolePolicyViolations(role))
+                    } else {
+                        let inherentViolation = await iscClient.analyseRolePolicyViolations(role)
+                        // Only return if violation exists
+                        if (inherentViolation && hasViolations(inherentViolation)) {
+                            detectedViolations++
+                            res.send(inherentViolation)
+                        }
+                    }
                 }
             }
-            logger.info(`stdAccountList at ${state.lastAggregationDate}: out of ${analysedRoles} analysed Roles, ${roleViolations} inherent violations found`)
 
+            // Re-analyze Roles that contain modified Access Profiles in case of delta processing
+            if (deltaProcessing) {
+                const modifiedAccessProfiles = await iscClient.listAccessProfiles(deltaProcessing, lastAggregationDate)
+                if (modifiedAccessProfiles && modifiedAccessProfiles.length > 0) {
+                    const modifiedRoles = await iscClient.searchRolesByAccessProfileIds(modifiedAccessProfiles)
+                    if (modifiedRoles && modifiedRoles.length > 0) {
+                        analysedObjects += modifiedRoles.length
+                        for (const modifiedRole of modifiedRoles) {
+                            if (iscClient.isParallelProcessing()) {
+                                // Call analyse function asynchronously
+                                inherentViolations.push(iscClient.analyseRolePolicyViolations(modifiedRole))
+                            } else {
+                                let inherentViolation = await iscClient.analyseRolePolicyViolations(modifiedRole)
+                                // Only return if violation exists
+                                if (inherentViolation && hasViolations(inherentViolation)) {
+                                    detectedViolations++
+                                    res.send(inherentViolation)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Await async processed items and return if violation exists
+            for (const inherentViolation of inherentViolations) {
+                let result = await inherentViolation
+                if (result && hasViolations(result)) {
+                    detectedViolations++
+                    res.send(result)
+                }
+            }
+
+            logger.info(`stdAccountList at ${state.lastAggregationDate}: out of ${analysedObjects} analysed Roles & Access Profiles, ${detectedViolations} inherent violations found`)
 
             // Save current date for Delta Aggregation
             res.saveState(state)
         })
         .stdAccountRead(async (context: Context, input: StdAccountReadInput, res: Response<StdAccountReadOutput>) => {
-            const id = (<SimpleKeyType>input.key).simple.id
-            const inherentViolation = await idnClient.reprocessInherentViolation(id)
+            const id = (input.key as SimpleKeyType).simple.id
+            const inherentViolation = await iscClient.reprocessInherentViolation(id)
             if (inherentViolation) {
-                logger.info(`stdAccountRead as ${(new Date()).toISOString()}: read account : ${input.identity}`)
+                logger.info(`stdAccountRead at ${(new Date()).toISOString()}: read account : ${input.identity}`)
                 res.send(inherentViolation)
             }
         })
